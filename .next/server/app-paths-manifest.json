@@ -1,3 +1,4 @@
 {
-  "/organize/page": "app/organize/page.js"
+  "/organize/page": "app/organize/page.js",
+  "/convert/[kind]/page": "app/convert/[kind]/page.js"
 }

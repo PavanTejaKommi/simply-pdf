@@ -50,6 +50,21 @@ export function Sidebar() {
             </button>
           ))}
         </div>
+        <p className="nav-heading convert-heading">Convert to PDF</p>
+        {[
+          ["word", "Word to PDF", "W"],
+          ["excel", "Excel to PDF", "X"],
+          ["powerpoint", "PowerPoint to PDF", "P"],
+          ["images", "Images to PDF", "▧"],
+          ["text", "Text to PDF", "T"],
+          ["html", "HTML to PDF", "<>"],
+          ["markdown", "Markdown to PDF", "M"],
+          ["audio", "Audio to PDF", "♫"]
+        ].map(([id, label, icon]) => (
+          <Link key={id} href={`/convert/${id}`} className={`nav-link ${pathname === `/convert/${id}` ? "active" : ""}`}>
+            <span className="nav-icon">{icon}</span>{label}
+          </Link>
+        ))}
       </nav>
       <div className="sidebar-bottom"><p className="sidebar-note">Files are processed locally<br />in your browser.</p></div>
     </aside>
