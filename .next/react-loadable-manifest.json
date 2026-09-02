@@ -1,0 +1,8 @@
+{
+  "lib\\pdfjs.ts -> pdfjs-dist/legacy/build/pdf.mjs": {
+    "id": "lib\\pdfjs.ts -> pdfjs-dist/legacy/build/pdf.mjs",
+    "files": [
+      "static/chunks/_app-pages-browser_node_modules_pdfjs-dist_legacy_build_pdf_mjs.js"
+    ]
+  }
+}
