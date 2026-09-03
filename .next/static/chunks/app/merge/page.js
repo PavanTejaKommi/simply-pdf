@@ -6,7 +6,7 @@
  * or disable the default devtool with "devtool: false".
  * If you are looking for production-ready output files, see mode: "production" (https://webpack.js.org/configuration/mode/).
  */
-(self["webpackChunk_N_E"] = self["webpackChunk_N_E"] || []).push([["app/organize/page"],{
+(self["webpackChunk_N_E"] = self["webpackChunk_N_E"] || []).push([["app/merge/page"],{
 
 /***/ "(app-pages-browser)/./node_modules/next/dist/build/webpack/loaders/next-flight-client-entry-loader.js?modules=%7B%22request%22%3A%22C%3A%5C%5CUsers%5C%5Cpavan.kommi%5C%5CDesktop%5C%5CProjects%20-%20Home%5C%5Csimply-pdf.worktrees%5C%5Cnextjs-simplypdf-organize-module%5C%5Ccomponents%5C%5CPdfWorkspace.tsx%22%2C%22ids%22%3A%5B%22PdfWorkspace%22%5D%7D&server=false!":
 /*!***************************************************************************************************************************************************************************************************************************************************************************************************************************************************************!*\
