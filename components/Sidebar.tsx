@@ -22,6 +22,18 @@ export function Sidebar() {
     { id: "n-up", label: "N-up layouts", icon: "⊞" },
     { id: "booklet", label: "Booklet formatting", icon: "▤" }
   ];
+  const fromPdf = [
+    ["office", "PDF to Office", "W"], ["images", "PDF to Images", "▧"], ["text", "PDF to Text / Markdown", "T"], ["html", "PDF to HTML", "<>"], ["pdfa", "PDF to PDF/A", "A"]
+  ];
+  const editTools = [
+    ["edit", "Edit text & images", "✎"], ["annotate", "Annotate & draw", "✦"], ["headers", "Headers & footers", "H"], ["numbers", "Page numbers", "#"], ["stamps", "Add stamps", "S"], ["colors", "Replace colors", "◐"], ["compare", "Compare PDFs", "⇄"]
+  ];
+  const secureTools = [
+    ["password", "Add / remove password", "⌑"], ["permissions", "Manage permissions", "⚿"], ["redact", "Redact content", "■"], ["sanitize", "Sanitize metadata", "⌫"], ["sign", "Sign PDF", "✓"], ["certificate", "Digital certificates", "◆"], ["watermark", "Watermark", "◇"]
+  ];
+  const optimizeTools = [
+    ["compress", "Compress PDF", "↓"], ["ocr", "OCR scanned PDF", "◎"], ["repair", "Repair PDF", "⌁"], ["flatten", "Flatten PDF", "▰"], ["linearize", "Web optimize", "↝"], ["assets", "Extract assets", "⇩"]
+  ];
   const selectTool = (tool: string) => {
     if (pathname !== "/organize") {
       router.push(`/organize#${tool}`);
@@ -65,6 +77,14 @@ export function Sidebar() {
             <span className="nav-icon">{icon}</span>{label}
           </Link>
         ))}
+        <p className="nav-heading tool-heading">Convert from PDF</p>
+        {fromPdf.map(([id, label, icon]) => <Link key={id} href={`/from-pdf/${id}`} className={`nav-link ${pathname === `/from-pdf/${id}` ? "active" : ""}`}><span className="nav-icon">{icon}</span>{label}</Link>)}
+        <p className="nav-heading tool-heading">Edit & modify</p>
+        {editTools.map(([id, label, icon]) => <Link key={id} href={`/edit/${id}`} className={`nav-link ${pathname === `/edit/${id}` ? "active" : ""}`}><span className="nav-icon">{icon}</span>{label}</Link>)}
+        <p className="nav-heading tool-heading">Secure & sign</p>
+        {secureTools.map(([id, label, icon]) => <Link key={id} href={`/secure/${id}`} className={`nav-link ${pathname === `/secure/${id}` ? "active" : ""}`}><span className="nav-icon">{icon}</span>{label}</Link>)}
+        <p className="nav-heading tool-heading">Optimize & repair</p>
+        {optimizeTools.map(([id, label, icon]) => <Link key={id} href={`/optimize/${id}`} className={`nav-link ${pathname === `/optimize/${id}` ? "active" : ""}`}><span className="nav-icon">{icon}</span>{label}</Link>)}
       </nav>
       <div className="sidebar-bottom"><p className="sidebar-note">Files are processed locally<br />in your browser.</p></div>
     </aside>
