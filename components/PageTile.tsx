@@ -4,7 +4,21 @@ import { useEffect, useRef } from "react";
 import type { PdfPage } from "../lib/pdf";
 import { loadPdf } from "../lib/pdfjs";
 
-export function PageTile({ page, selected, draggable, onClick, ...dragProps }: { page: PdfPage; selected?: boolean; draggable?: boolean; onClick?: () => void; [key: string]: unknown }) {
+export function PageTile({
+  page,
+  selected,
+  draggable,
+  onClick,
+  unselectedLabel = "Excluded",
+  ...dragProps
+}: {
+  page: PdfPage;
+  selected?: boolean;
+  draggable?: boolean;
+  onClick?: () => void;
+  unselectedLabel?: string;
+  [key: string]: unknown;
+}) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
     if (!page.file) return;
@@ -25,11 +39,24 @@ export function PageTile({ page, selected, draggable, onClick, ...dragProps }: {
     return () => { cancelled = true; };
   }, [page]);
   return (
-    <button className={`page-tile file-color-${page.fileIndex % 5} ${selected === true ? "selected" : selected === false ? "not-selected" : ""}`} onClick={onClick} draggable={draggable} aria-pressed={selected} {...dragProps}>
-      <span className="page-number">{page.blank ? "Blank" : page.pageIndex + 1}</span>
-      {selected === false && <span className="not-selected-badge" aria-hidden="true">× <span>Not selected</span></span>}
+    <button
+      className={`page-tile file-color-${page.fileIndex % 10} ${selected === true ? "selected" : selected === false ? "not-selected" : ""} ${onClick ? "clickable" : "non-clickable"}`}
+      onClick={onClick}
+      draggable={draggable}
+      aria-pressed={selected}
+      {...dragProps}
+    >
+      <span className="page-number">
+        <span className="file-badge">PDF {page.fileIndex + 1}</span>
+        <span className="page-idx">p.{page.blank ? "Blank" : page.pageIndex + 1}</span>
+      </span>
+      {selected === true && <span className="selected-badge" aria-hidden="true">✓</span>}
+      {selected === false && <span className="not-selected-badge" aria-hidden="true">× <span>{unselectedLabel}</span></span>}
       {page.blank ? <span className="blank-preview" /> : <canvas ref={canvasRef} style={{ transform: `rotate(${page.rotation || 0}deg)` }} />}
-      <span className="tile-caption">{page.file?.name ?? "Blank page"}</span>
+      <span className="tile-caption">
+        <span className="tile-caption-dot" />
+        <span className="tile-caption-text">{page.file?.name ?? "Blank page"}</span>
+      </span>
     </button>
   );
 }

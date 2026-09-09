@@ -4,9 +4,32 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useRouter } from "next/navigation";
 
+import { useEffect, useState } from "react";
+
 export function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
+  const [activeTool, setActiveTool] = useState<string>("organize");
+
+  useEffect(() => {
+    const updateTool = () => {
+      const hash = window.location.hash.replace("#", "");
+      setActiveTool(hash || "organize");
+    };
+    const handleOrganizeTool = (event: Event) => {
+      const tool = (event as CustomEvent<string>).detail;
+      setActiveTool(tool || "organize");
+    };
+
+    updateTool();
+    window.addEventListener("hashchange", updateTool);
+    window.addEventListener("organize-tool", handleOrganizeTool);
+    return () => {
+      window.removeEventListener("hashchange", updateTool);
+      window.removeEventListener("organize-tool", handleOrganizeTool);
+    };
+  }, [pathname]);
+
   const links = [
     { href: "/merge", label: "Merge PDF", icon: "▦" },
     { href: "/split", label: "Split PDF", icon: "✂" },
@@ -17,8 +40,8 @@ export function Sidebar() {
     { id: "delete", label: "Delete pages", icon: "×" },
     { id: "insert", label: "Insert blank pages", icon: "＋" },
     { id: "reverse", label: "Reverse page order", icon: "⇅" },
-    { id: "extract", label: "Extract pages", icon: "⇥" },
-    { id: "interleave", label: "Interleave PDFs", icon: "≋" },
+    { id: "extract", label: "Extract PDF", icon: "⇥" },
+    { id: "interleave", label: "Interleave pages", icon: "≋" },
     { id: "n-up", label: "N-up layouts", icon: "⊞" },
     { id: "booklet", label: "Booklet formatting", icon: "▤" }
   ];
@@ -35,12 +58,18 @@ export function Sidebar() {
     ["compress", "Compress PDF", "↓"], ["ocr", "OCR scanned PDF", "◎"], ["repair", "Repair PDF", "⌁"], ["flatten", "Flatten PDF", "▰"], ["linearize", "Web optimize", "↝"], ["assets", "Extract assets", "⇩"]
   ];
   const selectTool = (tool: string) => {
+    setActiveTool(tool);
+    const targetHash = tool === "organize" ? "" : `#${tool}`;
     if (pathname !== "/organize") {
-      router.push(`/organize#${tool}`);
+      router.push(`/organize${targetHash}`);
     } else {
+      window.history.replaceState(null, "", `/organize${targetHash}`);
       window.dispatchEvent(new CustomEvent("organize-tool", { detail: tool }));
     }
   };
+
+  const isOrganizeActive = pathname === "/organize" && (activeTool === "organize" || !activeTool);
+
   return (
     <aside className="sidebar">
       <Link href="/merge" className="brand"><span className="brand-mark">▤</span><span>Simply<span className="brand-accent">PDF</span></span></Link>
@@ -53,16 +82,25 @@ export function Sidebar() {
           </Link>
         ))}
         <div className="organize-tools" aria-label="Organize tools">
-          <button className="nav-link tool-link" onClick={() => selectTool("organize")}>
+          <button
+            type="button"
+            className={`nav-link tool-link ${isOrganizeActive ? "active" : ""}`}
+            onClick={() => selectTool("organize")}
+          >
             <span className="nav-icon">↕</span>Organize PDF
           </button>
           {tools.map((tool) => (
-            <button key={tool.id} className="nav-link tool-link" onClick={() => selectTool(tool.id)}>
+            <button
+              key={tool.id}
+              type="button"
+              className={`nav-link tool-link ${pathname === "/organize" && activeTool === tool.id ? "active" : ""}`}
+              onClick={() => selectTool(tool.id)}
+            >
               <span className="nav-icon">{tool.icon}</span>{tool.label}
             </button>
           ))}
         </div>
-        <p className="nav-heading convert-heading">Convert to PDF</p>
+        <p className="nav-heading tool-heading">Convert to PDF</p>
         {[
           ["word", "Word to PDF", "W"],
           ["excel", "Excel to PDF", "X"],
