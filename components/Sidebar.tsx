@@ -46,7 +46,15 @@ export function Sidebar() {
     { id: "booklet", label: "Booklet formatting", icon: "▤" }
   ];
   const fromPdf = [
-    ["office", "PDF to Office", "W"], ["images", "PDF to Images", "▧"], ["text", "PDF to Text / Markdown", "T"], ["html", "PDF to HTML", "<>"], ["pdfa", "PDF to PDF/A", "A"]
+    ["word", "PDF to Word", "W"],
+    ["powerpoint", "PDF to PowerPoint", "P"],
+    ["excel", "PDF to Excel", "X"],
+    ["audio", "PDF to Audio", "♫"],
+    ["office", "PDF to Office", "O"],
+    ["images", "PDF to Images", "▧"],
+    ["text", "PDF to Text / Markdown", "T"],
+    ["html", "PDF to HTML", "<>"],
+    ["pdfa", "PDF to PDF/A", "A"]
   ];
   const editTools = [
     ["edit", "Edit text & images", "✎"], ["annotate", "Annotate & draw", "✦"], ["headers", "Headers & footers", "H"], ["numbers", "Page numbers", "#"], ["stamps", "Add stamps", "S"], ["colors", "Replace colors", "◐"], ["compare", "Compare PDFs", "⇄"]

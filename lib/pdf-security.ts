@@ -1,21 +1,201 @@
-import { PDFDocument, PDFName, PDFRawStream, degrees, rgb, StandardFonts } from "pdf-lib";
+import { PDFDocument, PDFName, PDFRawStream, degrees, rgb, StandardFonts, PDFOperator, PDFOperatorNames, PDFNumber } from "pdf-lib";
 import forge from "node-forge";
 
 export type RedactionBounds = { pageIndex: number; x: number; y: number; width: number; height: number };
 
-type QpdfRequest = { input: ArrayBuffer; mode: "encrypt" | "decrypt"; userPassword?: string; ownerPassword?: string; print?: boolean; modify?: boolean };
+export type EncryptPdfOptions = {
+  input: ArrayBuffer;
+  userPassword?: string;
+  ownerPassword?: string;
+  keyLength?: 128 | 256;
+  print?: "none" | "low" | "full" | boolean;
+  modify?: "none" | "assembly" | "form" | "annotate" | "all" | boolean;
+  extract?: boolean;
+  annotate?: boolean;
+  accessibility?: boolean;
+};
 
-export function runQpdf(request: QpdfRequest) {
+export type DecryptPdfOptions = {
+  input: ArrayBuffer;
+  password?: string;
+  userPassword?: string;
+};
+
+type QpdfRequest = {
+  input: ArrayBuffer;
+  mode: "encrypt" | "decrypt";
+  userPassword?: string;
+  ownerPassword?: string;
+  keyLength?: 128 | 256;
+  print?: "none" | "low" | "full" | boolean;
+  modify?: "none" | "assembly" | "form" | "annotate" | "all" | boolean;
+  extract?: boolean;
+  annotate?: boolean;
+  accessibility?: boolean;
+  password?: string;
+};
+
+async function runQpdfDirect(request: QpdfRequest): Promise<Uint8Array> {
+  const createQpdf = (await import("@neslinesli93/qpdf-wasm")).default;
+  const errorLogs: string[] = [];
+
+  const qpdf = await createQpdf({
+    locateFile: () => "/qpdf.wasm",
+    printErr: (text: string) => {
+      errorLogs.push(text);
+    },
+  } as any);
+
+  const qpdfModule = qpdf as typeof qpdf & {
+    FS: {
+      writeFile: (path: string, data: Uint8Array) => void;
+      readFile: (path: string) => Uint8Array;
+    };
+  };
+
+  qpdfModule.FS.writeFile("/input.pdf", new Uint8Array(request.input));
+
+  let args: string[] = [];
+
+  if (request.mode === "encrypt") {
+    const userPass = request.userPassword || "";
+    const ownerPass = request.ownerPassword || request.userPassword || "";
+    const bits = String(request.keyLength === 128 ? 128 : 256);
+
+    args.push("--encrypt", userPass, ownerPass, bits);
+
+    if (request.print === "none" || request.print === false) {
+      args.push("--print=none");
+    } else if (request.print === "low") {
+      args.push("--print=low");
+    } else if (request.print === "full" || request.print === true) {
+      args.push("--print=full");
+    }
+
+    if (request.modify === "none" || request.modify === false) {
+      args.push("--modify=none");
+    } else if (request.modify === "assembly") {
+      args.push("--modify=assembly");
+    } else if (request.modify === "form") {
+      args.push("--modify=form");
+    } else if (request.modify === "annotate") {
+      args.push("--modify=annotate");
+    } else if (request.modify === "all" || request.modify === true) {
+      args.push("--modify=all");
+    }
+
+    if (request.extract === false) {
+      args.push("--extract=n");
+    } else if (request.extract === true) {
+      args.push("--extract=y");
+    }
+
+    if (request.annotate === false) {
+      args.push("--annotate=n");
+    } else if (request.annotate === true) {
+      args.push("--annotate=y");
+    }
+
+    if (request.accessibility === false) {
+      args.push("--accessibility=n");
+    }
+
+    args.push("--", "/input.pdf", "/output.pdf");
+  } else {
+    const pass = request.password || request.userPassword || request.ownerPassword || "";
+    if (pass) {
+      args.push(`--password=${pass}`);
+    }
+    args.push("--decrypt", "/input.pdf", "/output.pdf");
+  }
+
+  let code = 0;
+  try {
+    code = qpdfModule.callMain(args);
+  } catch (err: any) {
+    const fullLog = errorLogs.join(" ");
+    if (
+      fullLog.toLowerCase().includes("invalid password") ||
+      fullLog.toLowerCase().includes("incorrect password")
+    ) {
+      throw new Error("Incorrect password. Please verify the password and try again.");
+    }
+    throw new Error(fullLog || err?.message || "QPDF execution failed");
+  }
+
+  if (code !== 0) {
+    const fullLog = errorLogs.join(" ");
+    if (
+      fullLog.toLowerCase().includes("invalid password") ||
+      fullLog.toLowerCase().includes("incorrect password") ||
+      code === 2
+    ) {
+      throw new Error("Incorrect password. Please verify the password and try again.");
+    }
+    throw new Error(fullLog || `QPDF exited with code ${code}`);
+  }
+
+  return qpdfModule.FS.readFile("/output.pdf");
+}
+
+export function runQpdf(request: QpdfRequest): Promise<Uint8Array> {
   return new Promise<Uint8Array>((resolve, reject) => {
-    const worker = new Worker(new URL("./qpdf-worker.ts", import.meta.url));
-    worker.onmessage = (event: MessageEvent<{ output?: Uint8Array; error?: string }>) => { worker.terminate(); event.data.output ? resolve(event.data.output) : reject(new Error(event.data.error || "QPDF operation failed")); };
-    worker.onerror = () => { worker.terminate(); reject(new Error("QPDF worker could not start")); };
-    worker.postMessage(request, [request.input]);
+    try {
+      if (typeof Worker !== "undefined") {
+        const worker = new Worker(new URL("./qpdf-worker.ts", import.meta.url));
+        worker.onmessage = (
+          event: MessageEvent<{ output?: Uint8Array; error?: string }>
+        ) => {
+          worker.terminate();
+          if (event.data.output) {
+            resolve(event.data.output);
+          } else {
+            // If worker reported error, check if fallback is warranted
+            reject(new Error(event.data.error || "QPDF operation failed"));
+          }
+        };
+        worker.onerror = () => {
+          worker.terminate();
+          // Graceful fallback to direct WASM
+          runQpdfDirect(request).then(resolve).catch(reject);
+        };
+        worker.postMessage(request, [request.input]);
+      } else {
+        runQpdfDirect(request).then(resolve).catch(reject);
+      }
+    } catch {
+      runQpdfDirect(request).then(resolve).catch(reject);
+    }
   });
 }
 
-export function encryptPdf(input: { input: ArrayBuffer; userPassword: string; ownerPassword: string; print: boolean; modify: boolean }) { return runQpdf({ ...input, mode: "encrypt" }); }
-export function decryptPdf(input: { input: ArrayBuffer; userPassword: string }) { return runQpdf({ ...input, mode: "decrypt" }); }
+export function encryptPdf(options: EncryptPdfOptions) {
+  return runQpdf({ ...options, mode: "encrypt" });
+}
+
+export function decryptPdf(options: DecryptPdfOptions) {
+  return runQpdf({
+    input: options.input,
+    mode: "decrypt",
+    userPassword: options.password || options.userPassword,
+    password: options.password || options.userPassword,
+  });
+}
+
+export async function checkPdfEncrypted(
+  input: ArrayBuffer
+): Promise<{ isEncrypted: boolean }> {
+  try {
+    const pdf = await PDFDocument.load(input, { ignoreEncryption: true });
+    return { isEncrypted: Boolean(pdf.isEncrypted) };
+  } catch (err: any) {
+    const msg = String(err?.message || "").toLowerCase();
+    if (msg.includes("encrypt") || msg.includes("password")) {
+      return { isEncrypted: true };
+    }
+    return { isEncrypted: false };
+  }
+}
 
 function stripTextOperators(stream: string) {
   return stream.replace(/(?:\([^)]*\)|<[^>]*>|\S+)\s+(?:Tj|TJ|\'|\")\s*/g, "").replace(/BT[\s\S]*?ET/g, "");
@@ -48,10 +228,353 @@ export async function stampSignature(input: ArrayBuffer, png: Uint8Array, pageIn
   page.drawImage(await pdf.embedPng(png), { x, y, width, height }); return pdf.save({ useObjectStreams: true });
 }
 
-export async function applyWatermark(input: ArrayBuffer, text: string, opacity: number, repeat: boolean) {
-  const pdf = await PDFDocument.load(input); const font = await pdf.embedFont(StandardFonts.HelveticaBold);
-  for (const page of pdf.getPages()) { const positions = repeat ? Array.from({ length: 9 }, (_, index) => ({ x: 30 + (index % 3) * page.getWidth() / 3, y: 70 + Math.floor(index / 3) * page.getHeight() / 3 })) : [{ x: 50, y: page.getHeight() / 2 }]; for (const position of positions) page.drawText(text, { ...position, size: 28, font, color: rgb(0.2, 0.2, 0.2), opacity, rotate: degrees(35) }); }
+// ---------------------------------------------------------------------------
+// Advanced Watermark Engine: All Scenarios, Multiple Colors & Opacity
+// ---------------------------------------------------------------------------
+
+export type WatermarkType = "text" | "image";
+
+export type WatermarkLayout =
+  | "diagonal"
+  | "center"
+  | "tiled"
+  | "header"
+  | "footer"
+  | "anchor"
+  | "custom";
+
+export type WatermarkAnchor =
+  | "top-left"
+  | "top-center"
+  | "top-right"
+  | "center-left"
+  | "center"
+  | "center-right"
+  | "bottom-left"
+  | "bottom-center"
+  | "bottom-right";
+
+export type WatermarkFontFamily = "Helvetica" | "TimesRoman" | "Courier";
+export type WatermarkFontStyle = "regular" | "bold" | "italic" | "boldItalic";
+export type WatermarkRenderMode = "fill" | "stroke" | "both";
+export type WatermarkPageSelection = "all" | "first" | "last" | "odd" | "even" | "custom";
+export type WatermarkLayer = "foreground" | "background";
+
+export interface WatermarkOptions {
+  type: WatermarkType;
+  // Text options
+  text?: string;
+  colorHex?: string; // e.g. #ef4444
+  fontSize?: number; // in pt, default 48
+  fontFamily?: WatermarkFontFamily;
+  fontStyle?: WatermarkFontStyle;
+  renderMode?: WatermarkRenderMode;
+  strokeWidth?: number;
+
+  // Image options
+  imageBytes?: Uint8Array;
+  imageFormat?: "png" | "jpeg";
+  imageScalePct?: number; // 10% to 150%, default 40%
+
+  // Layout & positioning
+  layout: WatermarkLayout;
+  anchor?: WatermarkAnchor;
+  rotationDeg?: number; // -180 to 180
+  opacity: number; // 0.05 to 1.0
+  customOffsetX?: number; // 0 to 100 (% of page width)
+  customOffsetY?: number; // 0 to 100 (% of page height)
+  layer?: WatermarkLayer;
+
+  // Target pages
+  pageSelection?: WatermarkPageSelection;
+  customPageRange?: string; // e.g. "1-3, 5"
+}
+
+export function parseColorToRgb(hex: string = "#ef4444") {
+  let clean = hex.replace("#", "").trim();
+  if (clean.length === 3) {
+    clean = clean.split("").map((c) => c + c).join("");
+  }
+  const val = parseInt(clean, 16);
+  if (isNaN(val)) return { r: 0.85, g: 0.15, b: 0.15 };
+  return {
+    r: Math.min(1, Math.max(0, ((val >> 16) & 255) / 255)),
+    g: Math.min(1, Math.max(0, ((val >> 8) & 255) / 255)),
+    b: Math.min(1, Math.max(0, (val & 255) / 255)),
+  };
+}
+
+export function parsePageRange(rangeStr: string, totalPages: number): Set<number> {
+  const result = new Set<number>();
+  if (!rangeStr || !rangeStr.trim()) return result;
+  const parts = rangeStr.split(/[,;\s]+/);
+  for (const part of parts) {
+    if (!part) continue;
+    if (part.includes("-")) {
+      const [startStr, endStr] = part.split("-");
+      const start = Math.max(1, parseInt(startStr, 10));
+      const end = Math.min(totalPages, parseInt(endStr, 10));
+      if (!isNaN(start) && !isNaN(end)) {
+        for (let i = start; i <= end; i++) {
+          result.add(i - 1);
+        }
+      }
+    } else {
+      const pageNum = parseInt(part, 10);
+      if (!isNaN(pageNum) && pageNum >= 1 && pageNum <= totalPages) {
+        result.add(pageNum - 1);
+      }
+    }
+  }
+  return result;
+}
+
+export function shouldWatermarkPage(
+  pageIndex: number,
+  totalPages: number,
+  selection: WatermarkPageSelection = "all",
+  customRange?: string
+): boolean {
+  if (selection === "all") return true;
+  if (selection === "first") return pageIndex === 0;
+  if (selection === "last") return pageIndex === totalPages - 1;
+  if (selection === "odd") return pageIndex % 2 === 0; // Page 1 is index 0
+  if (selection === "even") return pageIndex % 2 === 1; // Page 2 is index 1
+  if (selection === "custom" && customRange) {
+    const set = parsePageRange(customRange, totalPages);
+    return set.has(pageIndex);
+  }
+  return true;
+}
+
+function resolveStandardFont(
+  family: WatermarkFontFamily = "Helvetica",
+  style: WatermarkFontStyle = "bold"
+): StandardFonts {
+  if (family === "TimesRoman") {
+    if (style === "bold") return StandardFonts.TimesRomanBold;
+    if (style === "italic") return StandardFonts.TimesRomanItalic;
+    if (style === "boldItalic") return StandardFonts.TimesRomanBoldItalic;
+    return StandardFonts.TimesRoman;
+  }
+  if (family === "Courier") {
+    if (style === "bold") return StandardFonts.CourierBold;
+    if (style === "italic") return StandardFonts.CourierOblique;
+    if (style === "boldItalic") return StandardFonts.CourierBoldOblique;
+    return StandardFonts.Courier;
+  }
+  if (style === "regular") return StandardFonts.Helvetica;
+  if (style === "italic") return StandardFonts.HelveticaOblique;
+  if (style === "boldItalic") return StandardFonts.HelveticaBoldOblique;
+  return StandardFonts.HelveticaBold;
+}
+
+export async function applyAdvancedWatermark(
+  input: ArrayBuffer,
+  options: WatermarkOptions
+): Promise<Uint8Array> {
+  const pdf = await PDFDocument.load(input);
+  const pages = pdf.getPages();
+  const totalPages = pages.length;
+  if (totalPages === 0) return pdf.save({ useObjectStreams: true });
+
+  const isText = options.type !== "image";
+  const color = parseColorToRgb(options.colorHex || "#ef4444");
+  const pdfColor = rgb(color.r, color.g, color.b);
+  const opacity = Math.min(1, Math.max(0.01, options.opacity ?? 0.25));
+
+  // Pre-embed font if text mode
+  let font: any = null;
+  let lines: string[] = [];
+  let fontSize = options.fontSize || 48;
+  let lineHeight = fontSize * 1.25;
+
+  if (isText) {
+    const standardFont = resolveStandardFont(options.fontFamily, options.fontStyle);
+    font = await pdf.embedFont(standardFont);
+    const rawText = options.text?.trim() ? options.text : "CONFIDENTIAL";
+    lines = rawText.split("\n").filter((l) => l.length > 0);
+    if (lines.length === 0) lines = ["CONFIDENTIAL"];
+  }
+
+  // Pre-embed image if image mode
+  let embeddedImage: any = null;
+  let imgWidth = 0;
+  let imgHeight = 0;
+
+  if (!isText && options.imageBytes && options.imageBytes.length > 0) {
+    const bytes = options.imageBytes;
+    const isPng =
+      options.imageFormat === "png" ||
+      (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47);
+    try {
+      embeddedImage = isPng ? await pdf.embedPng(bytes) : await pdf.embedJpg(bytes);
+      imgWidth = embeddedImage.width;
+      imgHeight = embeddedImage.height;
+    } catch {
+      // Fallback: try the other format
+      try {
+        embeddedImage = !isPng ? await pdf.embedPng(bytes) : await pdf.embedJpg(bytes);
+        imgWidth = embeddedImage.width;
+        imgHeight = embeddedImage.height;
+      } catch (err) {
+        console.warn("Failed to embed watermark image:", err);
+      }
+    }
+  }
+
+  for (let pageIdx = 0; pageIdx < totalPages; pageIdx++) {
+    if (!shouldWatermarkPage(pageIdx, totalPages, options.pageSelection, options.customPageRange)) {
+      continue;
+    }
+
+    const page = pages[pageIdx];
+    const pageWidth = page.getWidth();
+    const pageHeight = page.getHeight();
+
+    // Determine target rotation angle
+    let angleDeg = options.rotationDeg;
+    if (angleDeg === undefined) {
+      if (options.layout === "diagonal") angleDeg = 45;
+      else if (options.layout === "tiled") angleDeg = 35;
+      else angleDeg = 0;
+    }
+    const angleRad = (angleDeg * Math.PI) / 180;
+
+    // Calculate dimensions for text / image bounding box
+    let boxWidth = 0;
+    let boxHeight = 0;
+
+    if (isText && font) {
+      boxWidth = Math.max(...lines.map((line) => font.widthOfTextAtSize(line, fontSize)));
+      boxHeight = lines.length * lineHeight;
+    } else if (embeddedImage) {
+      const scalePct = (options.imageScalePct || 40) / 100;
+      const targetW = pageWidth * scalePct;
+      const aspect = imgHeight / (imgWidth || 1);
+      boxWidth = targetW;
+      boxHeight = targetW * aspect;
+    }
+
+    // Determine target center coordinates (cx, cy)
+    const margin = 48;
+    const centers: { cx: number; cy: number }[] = [];
+
+    if (options.layout === "diagonal" || options.layout === "center") {
+      centers.push({ cx: pageWidth / 2, cy: pageHeight / 2 });
+    } else if (options.layout === "header") {
+      centers.push({ cx: pageWidth / 2, cy: pageHeight - 32 });
+    } else if (options.layout === "footer") {
+      centers.push({ cx: pageWidth / 2, cy: 32 });
+    } else if (options.layout === "custom") {
+      const xPct = (options.customOffsetX !== undefined ? options.customOffsetX : 50) / 100;
+      const yPct = (options.customOffsetY !== undefined ? options.customOffsetY : 50) / 100;
+      centers.push({ cx: pageWidth * xPct, cy: pageHeight * yPct });
+    } else if (options.layout === "anchor") {
+      const anchor = options.anchor || "center";
+      let cx = pageWidth / 2;
+      let cy = pageHeight / 2;
+      if (anchor.includes("left")) cx = margin + boxWidth / 2;
+      else if (anchor.includes("right")) cx = pageWidth - margin - boxWidth / 2;
+
+      if (anchor.startsWith("top")) cy = pageHeight - margin - boxHeight / 2;
+      else if (anchor.startsWith("bottom")) cy = margin + boxHeight / 2;
+      centers.push({ cx, cy });
+    } else if (options.layout === "tiled") {
+      // 3x3 repeating grid
+      const colFractions = [1 / 6, 3 / 6, 5 / 6];
+      const rowFractions = [1 / 6, 3 / 6, 5 / 6];
+      for (const rx of rowFractions) {
+        for (const cx of colFractions) {
+          centers.push({ cx: pageWidth * cx, cy: pageHeight * rx });
+        }
+      }
+    }
+
+    // Render onto page at all target centers
+    for (const { cx, cy } of centers) {
+      if (isText && font) {
+        const N = lines.length;
+        const renderMode = options.renderMode || "fill";
+
+        if (renderMode === "stroke" || renderMode === "both") {
+          page.pushOperators(
+            PDFOperator.of(PDFOperatorNames.SetLineWidth, [
+              PDFNumber.of(options.strokeWidth || 1.5),
+            ]),
+            PDFOperator.of(PDFOperatorNames.StrokingColorRgb, [
+              PDFNumber.of(color.r),
+              PDFNumber.of(color.g),
+              PDFNumber.of(color.b),
+            ]),
+            PDFOperator.of(PDFOperatorNames.SetTextRenderingMode, [
+              PDFNumber.of(renderMode === "stroke" ? 1 : 2),
+            ])
+          );
+        }
+
+        for (let i = 0; i < N; i++) {
+          const line = lines[i];
+          const lineWidth = font.widthOfTextAtSize(line, fontSize);
+          const lineHeightAtSize = font.heightAtSize(fontSize) * 0.75;
+          const dLocal = ((N - 1) / 2 - i) * lineHeight;
+
+          // Offset line center along perpendicular angle
+          const lineCx = cx - dLocal * Math.sin(angleRad);
+          const lineCy = cy + dLocal * Math.cos(angleRad);
+
+          const dx = (lineWidth / 2) * Math.cos(angleRad) - (lineHeightAtSize / 2) * Math.sin(angleRad);
+          const dy = (lineWidth / 2) * Math.sin(angleRad) + (lineHeightAtSize / 2) * Math.cos(angleRad);
+
+          page.drawText(line, {
+            x: lineCx - dx,
+            y: lineCy - dy,
+            size: fontSize,
+            font,
+            color: pdfColor,
+            opacity,
+            rotate: degrees(angleDeg),
+          });
+        }
+
+        if (renderMode === "stroke" || renderMode === "both") {
+          page.pushOperators(
+            PDFOperator.of(PDFOperatorNames.SetTextRenderingMode, [PDFNumber.of(0)])
+          );
+        }
+      } else if (embeddedImage) {
+        const dx = (boxWidth / 2) * Math.cos(angleRad) - (boxHeight / 2) * Math.sin(angleRad);
+        const dy = (boxWidth / 2) * Math.sin(angleRad) + (boxHeight / 2) * Math.cos(angleRad);
+
+        page.drawImage(embeddedImage, {
+          x: cx - dx,
+          y: cy - dy,
+          width: boxWidth,
+          height: boxHeight,
+          opacity,
+          rotate: degrees(angleDeg),
+        });
+      }
+    }
+  }
+
   return pdf.save({ useObjectStreams: true });
+}
+
+export async function applyWatermark(
+  input: ArrayBuffer,
+  text: string,
+  opacity: number,
+  repeat: boolean
+) {
+  return applyAdvancedWatermark(input, {
+    type: "text",
+    text,
+    opacity,
+    layout: repeat ? "tiled" : "diagonal",
+    colorHex: "#334155",
+    fontSize: repeat ? 28 : 48,
+  });
 }
 
 export async function signWithP12(input: ArrayBuffer, certificateFile: ArrayBuffer, password: string) {

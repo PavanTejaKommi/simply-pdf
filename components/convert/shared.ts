@@ -45,6 +45,7 @@ export interface ConvertMultiPageOptions {
   fileName: string;
   nominalPageHeightPx?: number;
   orientation?: "portrait" | "landscape";
+  onePagePerElement?: boolean;
   onProgress?: (text: string) => void;
 }
 
@@ -52,7 +53,7 @@ export async function convertElementsToPdf(
   elements: HTMLElement[],
   options: ConvertMultiPageOptions
 ): Promise<jsPDF> {
-  const { fileName, orientation: forcedOrientation, onProgress } = options;
+  const { fileName, orientation: forcedOrientation, onePagePerElement, onProgress } = options;
   let pdf: jsPDF | null = null;
 
   // Pre-calculate target pages
@@ -67,7 +68,7 @@ export async function convertElementsToPdf(
         : Math.round(widthPx * (11 / 8.5));
     }
     const totalH = elem.offsetHeight || rect.height || nominalH;
-    const pages = Math.max(1, Math.ceil((totalH - 15) / nominalH));
+    const pages = onePagePerElement ? 1 : Math.max(1, Math.ceil((totalH - 15) / nominalH));
     return { elem, widthPx, nominalH, totalH, pages };
   });
 
@@ -80,8 +81,9 @@ export async function convertElementsToPdf(
     onProgress?.(`Rendering page ${currentPage} of ${totalPages} (192 DPI)…`);
     await new Promise((r) => setTimeout(r, 25));
 
+    const renderHeightPx = onePagePerElement ? (elem.offsetHeight || nominalH) : nominalH;
     const widthPt = (widthPx / 96) * 72;
-    const pageHeightPt = (nominalH / 96) * 72;
+    const pageHeightPt = (renderHeightPx / 96) * 72;
     const isLandscape = forcedOrientation ? forcedOrientation === "landscape" : widthPt > pageHeightPt;
 
     const fullCanvas = await html2canvas(elem, {
@@ -94,7 +96,7 @@ export async function convertElementsToPdf(
       windowWidth: Math.max(document.documentElement.offsetWidth, elem.scrollWidth),
     });
 
-    if (pages === 1) {
+    if (onePagePerElement || pages === 1) {
       if (!pdf) {
         pdf = new jsPDF({
           orientation: isLandscape ? "landscape" : "portrait",
