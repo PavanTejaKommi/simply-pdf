@@ -2007,3 +2007,113 @@ h1 { font: 700 clamp(35px, 5vw, 53px)/1 "Space Grotesk"; letter-spacing: -2.5px;
 .pwd-action-box {
   margin-top: 8px;
 }
+
+/* ==========================================================================
+   PDF Permissions Studio (Cohesive with Password & Security Studio)
+   ========================================================================== */
+
+.perm-profile-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.perm-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  text-align: left;
+  padding: 12px 14px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  gap: 4px;
+}
+
+.perm-chip strong {
+  font-size: 13px;
+  color: var(--text);
+}
+
+.perm-chip span {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.perm-chip:hover {
+  border-color: var(--accent);
+}
+
+.perm-chip.active {
+  border-color: var(--accent);
+  background: var(--surface);
+  box-shadow: 0 0 0 1.5px var(--accent);
+}
+
+.perm-checkbox-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  margin-top: 14px;
+  padding: 12px 14px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+/* Effective Recipient Rights Banner */
+.perm-summary-banner {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.perm-summary-title {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--muted);
+}
+
+.perm-summary-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.perm-summary-pill {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 20px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.perm-summary-pill.good {
+  background: rgba(16, 185, 129, 0.12);
+  color: #10b981;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.perm-summary-pill.warn {
+  background: rgba(245, 158, 11, 0.12);
+  color: #f59e0b;
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.perm-summary-pill.bad {
+  background: rgba(239, 68, 68, 0.12);
+  color: #ef4444;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}

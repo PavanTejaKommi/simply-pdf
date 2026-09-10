@@ -182,6 +182,37 @@ export function decryptPdf(options: DecryptPdfOptions) {
   });
 }
 
+export type ManagePermissionsOptions = {
+  input: ArrayBuffer;
+  permissionsPassword: string;
+  requireOpenPassword?: boolean;
+  openPassword?: string;
+  keyLength?: 128 | 256;
+  print?: "none" | "low" | "full" | boolean;
+  modify?: "none" | "assembly" | "form" | "annotate" | "all" | boolean;
+  extract?: boolean;
+  annotate?: boolean;
+  accessibility?: boolean;
+};
+
+export function applyPdfPermissions(options: ManagePermissionsOptions) {
+  const userPass = options.requireOpenPassword ? (options.openPassword || "") : "";
+  const ownerPass = options.permissionsPassword || userPass;
+
+  return runQpdf({
+    input: options.input,
+    mode: "encrypt",
+    userPassword: userPass,
+    ownerPassword: ownerPass,
+    keyLength: options.keyLength || 256,
+    print: options.print,
+    modify: options.modify,
+    extract: options.extract,
+    annotate: options.annotate,
+    accessibility: options.accessibility,
+  });
+}
+
 export async function checkPdfEncrypted(
   input: ArrayBuffer
 ): Promise<{ isEncrypted: boolean }> {
@@ -197,8 +228,16 @@ export async function checkPdfEncrypted(
   }
 }
 
-function stripTextOperators(stream: string) {
-  return stream.replace(/(?:\([^)]*\)|<[^>]*>|\S+)\s+(?:Tj|TJ|\'|\")\s*/g, "").replace(/BT[\s\S]*?ET/g, "");
+export interface RedactionItem {
+  id: string;
+  pageIndex: number; // 0-indexed
+  x: number; // bottom-left origin in PDF points
+  y: number; // bottom-left origin in PDF points
+  width: number;
+  height: number;
+  color?: "black" | "white" | "gray";
+  label?: string; // e.g. "[REDACTED]"
+  reason?: string; // e.g. "Email", "Custom Box"
 }
 
 export async function redactPdf(input: ArrayBuffer, bounds: RedactionBounds[]) {
@@ -206,20 +245,169 @@ export async function redactPdf(input: ArrayBuffer, bounds: RedactionBounds[]) {
   for (const bound of bounds) {
     const page = pdf.getPages()[bound.pageIndex];
     if (!page) continue;
-    const contents = page.node.Contents();
-    if (contents instanceof PDFRawStream) {
-      const stripped = new TextDecoder().decode(contents.getContents());
-      const stream = PDFRawStream.of(contents.dict, new TextEncoder().encode(stripTextOperators(stripped)));
-      page.node.set(PDFName.of("Contents"), pdf.context.register(stream));
-    }
     page.drawRectangle({ x: bound.x, y: bound.y, width: bound.width, height: bound.height, color: rgb(0, 0, 0), opacity: 1 });
   }
   return pdf.save({ useObjectStreams: true });
 }
 
+export async function applyAdvancedRedactPdf(
+  input: ArrayBuffer,
+  redactions: RedactionItem[]
+): Promise<Uint8Array> {
+  const pdf = await PDFDocument.load(input, { ignoreEncryption: true });
+  const font = await pdf.embedFont(StandardFonts.HelveticaBold);
+
+  // Group redactions by pageIndex
+  const pageRedactions = new Map<number, RedactionItem[]>();
+  for (const r of redactions) {
+    const list = pageRedactions.get(r.pageIndex) || [];
+    list.push(r);
+    pageRedactions.set(r.pageIndex, list);
+  }
+
+  const pages = pdf.getPages();
+  for (const [pageIndex, list] of Array.from(pageRedactions.entries())) {
+    if (pageIndex < 0 || pageIndex >= pages.length) continue;
+    const page = pages[pageIndex];
+
+    for (const item of list) {
+      let fillColor = rgb(0, 0, 0);
+      let textColor = rgb(1, 1, 1);
+      if (item.color === "white") {
+        fillColor = rgb(1, 1, 1);
+        textColor = rgb(0, 0, 0);
+      } else if (item.color === "gray") {
+        fillColor = rgb(0.25, 0.25, 0.25);
+        textColor = rgb(1, 1, 1);
+      }
+
+      page.drawRectangle({
+        x: item.x,
+        y: item.y,
+        width: item.width,
+        height: item.height,
+        color: fillColor,
+        opacity: 1,
+      });
+
+      if (item.label && item.width > 28 && item.height > 9) {
+        const fontSize = Math.min(10, Math.max(6, item.height * 0.55));
+        const textWidth = font.widthOfTextAtSize(item.label, fontSize);
+        if (textWidth < item.width - 4) {
+          page.drawText(item.label, {
+            x: item.x + (item.width - textWidth) / 2,
+            y: item.y + (item.height - fontSize) / 2,
+            size: fontSize,
+            font,
+            color: textColor,
+          });
+        }
+      }
+    }
+  }
+
+  return pdf.save({ useObjectStreams: true });
+}
+
+export interface PdfMetadataReport {
+  title: string;
+  author: string;
+  subject: string;
+  keywords: string[];
+  creator: string;
+  producer: string;
+  creationDate: string;
+  modificationDate: string;
+  hasXmp: boolean;
+  pageCount: number;
+  isEncrypted: boolean;
+}
+
+export async function inspectPdfMetadata(input: ArrayBuffer): Promise<PdfMetadataReport> {
+  const pdf = await PDFDocument.load(input, { ignoreEncryption: true, updateMetadata: false });
+  const title = pdf.getTitle() || "";
+  const author = pdf.getAuthor() || "";
+  const subject = pdf.getSubject() || "";
+  const rawKeywords = pdf.getKeywords();
+  const keywords = rawKeywords ? rawKeywords.split(/[,;]\s*/).filter(Boolean) : [];
+  const creator = pdf.getCreator() || "";
+  const producer = pdf.getProducer() || "";
+  let creationDate = "";
+  try {
+    const cd = pdf.getCreationDate();
+    if (cd) creationDate = cd.toISOString();
+  } catch {
+    creationDate = "";
+  }
+  let modificationDate = "";
+  try {
+    const md = pdf.getModificationDate();
+    if (md) modificationDate = md.toISOString();
+  } catch {
+    modificationDate = "";
+  }
+  const catalog = pdf.catalog;
+  const hasXmp = Boolean(catalog.has(PDFName.of("Metadata")));
+  const pageCount = pdf.getPageCount();
+
+  return {
+    title,
+    author,
+    subject,
+    keywords,
+    creator,
+    producer,
+    creationDate,
+    modificationDate,
+    hasXmp,
+    pageCount,
+    isEncrypted: Boolean(pdf.isEncrypted),
+  };
+}
+
+export interface SanitizeOptions {
+  stripAuthor?: boolean;
+  stripTitle?: boolean;
+  stripSubject?: boolean;
+  stripKeywords?: boolean;
+  stripCreator?: boolean;
+  stripProducer?: boolean;
+  stripCreationDate?: boolean;
+  stripModificationDate?: boolean;
+  stripXmp?: boolean;
+  customTitle?: string;
+  customAuthor?: string;
+}
+
 export async function sanitizePdf(input: ArrayBuffer) {
-  const pdf = await PDFDocument.load(input, { updateMetadata: false });
-  pdf.setTitle(""); pdf.setAuthor(""); pdf.setSubject(""); pdf.setKeywords([]); pdf.setCreator(""); pdf.setProducer("");
+  return applyAdvancedSanitizePdf(input);
+}
+
+export async function applyAdvancedSanitizePdf(
+  input: ArrayBuffer,
+  options: SanitizeOptions = {}
+): Promise<Uint8Array> {
+  const pdf = await PDFDocument.load(input, { updateMetadata: false, ignoreEncryption: true });
+
+  if (options.stripTitle ?? true) pdf.setTitle(options.customTitle || "");
+  if (options.stripAuthor ?? true) pdf.setAuthor(options.customAuthor || "");
+  if (options.stripSubject ?? true) pdf.setSubject("");
+  if (options.stripKeywords ?? true) pdf.setKeywords([]);
+  if (options.stripCreator ?? true) pdf.setCreator("");
+  if (options.stripProducer ?? true) pdf.setProducer("");
+  if (options.stripCreationDate ?? true) pdf.setCreationDate(new Date(0));
+  if (options.stripModificationDate ?? true) pdf.setModificationDate(new Date(0));
+
+  if (options.stripXmp ?? true) {
+    const catalog = pdf.catalog;
+    if (catalog.has(PDFName.of("Metadata"))) {
+      catalog.delete(PDFName.of("Metadata"));
+    }
+    if (catalog.has(PDFName.of("PieceInfo"))) {
+      catalog.delete(PDFName.of("PieceInfo"));
+    }
+  }
+
   return pdf.save({ useObjectStreams: true, addDefaultPage: false });
 }
 
