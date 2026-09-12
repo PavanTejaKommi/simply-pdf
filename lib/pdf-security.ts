@@ -535,7 +535,7 @@ export function shouldWatermarkPage(
   return true;
 }
 
-function resolveStandardFont(
+export function resolveStandardFont(
   family: WatermarkFontFamily = "Helvetica",
   style: WatermarkFontStyle = "bold"
 ): StandardFonts {
@@ -773,4 +773,117 @@ export async function signWithP12(input: ArrayBuffer, certificateFile: ArrayBuff
   if (!key || !certificate) throw new Error("The certificate does not contain a private key and certificate");
   const signed = forge.pkcs7.createSignedData(); signed.content = forge.util.createBuffer(binary(input), "raw"); signed.addCertificate(certificate); signed.addSigner({ key: key as forge.pki.rsa.PrivateKey, certificate, digestAlgorithm: forge.pki.oids.sha256 }); signed.sign({ detached: true });
   const block = forge.asn1.toDer(signed.toAsn1()).getBytes(); const marker = new TextEncoder().encode(`\n% SimplyPDF-PKCS7 ${forge.util.bytesToHex(block)}\n`); const output = new Uint8Array(input.byteLength + marker.byteLength); output.set(new Uint8Array(input)); output.set(marker, input.byteLength); return output;
+}
+
+// ---------------------------------------------------------------------------
+// Headers & Footers Engine
+// ---------------------------------------------------------------------------
+
+export interface HeadersFootersOptions {
+  topLeft?: string;
+  topCenter?: string;
+  topRight?: string;
+  bottomLeft?: string;
+  bottomCenter?: string;
+  bottomRight?: string;
+
+  headerFontFamily?: WatermarkFontFamily;
+  headerFontStyle?: WatermarkFontStyle;
+  headerFontSize?: number;
+  headerColorHex?: string;
+  marginTop?: number;
+
+  footerFontFamily?: WatermarkFontFamily;
+  footerFontStyle?: WatermarkFontStyle;
+  footerFontSize?: number;
+  footerColorHex?: string;
+  marginBottom?: number;
+
+  marginX?: number;
+  pageSelection?: WatermarkPageSelection;
+  customPageRange?: string;
+}
+
+export async function applyAdvancedHeadersFooters(
+  input: ArrayBuffer,
+  options: HeadersFootersOptions
+): Promise<Uint8Array> {
+  const pdf = await PDFDocument.load(input);
+  const pages = pdf.getPages();
+  const totalPages = pages.length;
+  if (totalPages === 0) return pdf.save({ useObjectStreams: true });
+
+  const headerColor = parseColorToRgb(options.headerColorHex || "#000000");
+  const headerPdfColor = rgb(headerColor.r, headerColor.g, headerColor.b);
+  const headerFontSize = options.headerFontSize || 12;
+  const headerFont = await pdf.embedFont(resolveStandardFont(options.headerFontFamily, options.headerFontStyle));
+
+  const footerColor = parseColorToRgb(options.footerColorHex || "#000000");
+  const footerPdfColor = rgb(footerColor.r, footerColor.g, footerColor.b);
+  const footerFontSize = options.footerFontSize || 12;
+  const footerFont = await pdf.embedFont(resolveStandardFont(options.footerFontFamily, options.footerFontStyle));
+
+  const marginTop = options.marginTop !== undefined ? options.marginTop : 36;
+  const marginBottom = options.marginBottom !== undefined ? options.marginBottom : 36;
+  const marginX = options.marginX !== undefined ? options.marginX : 36;
+
+  for (let pageIdx = 0; pageIdx < totalPages; pageIdx++) {
+    if (!shouldWatermarkPage(pageIdx, totalPages, options.pageSelection, options.customPageRange)) {
+      continue;
+    }
+
+    const page = pages[pageIdx];
+    const pageWidth = page.getWidth();
+    const pageHeight = page.getHeight();
+
+    const drawZone = (textRaw: string | undefined, align: "left" | "center" | "right", isTop: boolean) => {
+      if (!textRaw) return;
+      
+      const text = textRaw
+        .replace(/{page}/g, String(pageIdx + 1))
+        .replace(/{total}/g, String(totalPages));
+
+      if (!text) return;
+
+      const font = isTop ? headerFont : footerFont;
+      const fontSize = isTop ? headerFontSize : footerFontSize;
+      const pdfColor = isTop ? headerPdfColor : footerPdfColor;
+
+      const textWidth = font.widthOfTextAtSize(text, fontSize);
+      const textHeight = font.heightAtSize(fontSize);
+
+      let x = marginX;
+      if (align === "center") {
+        x = (pageWidth - textWidth) / 2;
+      } else if (align === "right") {
+        x = pageWidth - marginX - textWidth;
+      }
+
+      let y = isTop ? pageHeight - marginTop - textHeight : marginBottom;
+
+      page.drawText(text, {
+        x,
+        y,
+        size: fontSize,
+        font,
+        color: pdfColor,
+      });
+    };
+
+    drawZone(options.topLeft, "left", true);
+    drawZone(options.topCenter, "center", true);
+    drawZone(options.topRight, "right", true);
+    drawZone(options.bottomLeft, "left", false);
+    drawZone(options.bottomCenter, "center", false);
+    drawZone(options.bottomRight, "right", false);
+  }
+
+  return pdf.save({ useObjectStreams: true });
+}
+
+export async function flattenFormsPdf(input: ArrayBuffer): Promise<Uint8Array> {
+  const pdf = await PDFDocument.load(input);
+  const form = pdf.getForm();
+  form.flatten();
+  return pdf.save({ useObjectStreams: true });
 }

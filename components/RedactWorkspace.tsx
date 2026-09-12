@@ -65,6 +65,7 @@ export function RedactWorkspace() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const overlayRef = useRef<HTMLCanvasElement | null>(null);
   const renderTaskRef = useRef<any>(null);
+  const [pageViewport, setPageViewport] = useState<any | null>(null);
 
   // Processing & Feedback State
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
@@ -130,6 +131,7 @@ export function RedactWorkspace() {
         if (!isMounted) return;
 
         const viewport = page.getViewport({ scale: zoomScale });
+        setPageViewport(viewport);
         const canvas = canvasRef.current;
         const overlay = overlayRef.current;
         if (!canvas || !overlay) return;
@@ -191,11 +193,21 @@ export function RedactWorkspace() {
     const pageItems = redactions.filter((r) => r.pageIndex === pageIndex);
 
     for (const item of pageItems) {
-      // Map PDF points to canvas pixels
-      const clientX = item.x * scale;
-      const clientY = cHeight - (item.y + item.height) * scale;
-      const clientW = item.width * scale;
-      const clientH = item.height * scale;
+      let clientX, clientY, clientW, clientH;
+      
+      if (pageViewport) {
+        const [x1, y1, x2, y2] = pageViewport.convertToViewportRectangle([item.x, item.y, item.x + item.width, item.y + item.height]);
+        clientX = Math.min(x1, x2);
+        clientY = Math.min(y1, y2);
+        clientW = Math.abs(x2 - x1);
+        clientH = Math.abs(y2 - y1);
+      } else {
+        // Fallback
+        clientX = item.x * scale;
+        clientY = cHeight - (item.y + item.height) * scale;
+        clientW = item.width * scale;
+        clientH = item.height * scale;
+      }
 
       ctx.fillStyle =
         item.color === "white"
@@ -238,7 +250,7 @@ export function RedactWorkspace() {
   // Re-draw overlays whenever redactions, currentBox, or styling changes
   useEffect(() => {
     drawOverlays();
-  }, [redactions, currentBox, currentPage, zoomScale, redactColor, redactLabel, applyLabel]);
+  }, [redactions, currentBox, currentPage, zoomScale, redactColor, redactLabel, applyLabel, pageViewport]);
 
   // Pointer Down: Start Drawing Box
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -284,10 +296,20 @@ export function RedactWorkspace() {
     // Minimum size check (5px)
     if (currentBox.width >= 5 && currentBox.height >= 5) {
       // Convert canvas pixels to PDF points
-      const pdfX = currentBox.x / scale;
-      const pdfY = (overlay.height - (currentBox.y + currentBox.height)) / scale;
-      const pdfW = currentBox.width / scale;
-      const pdfH = currentBox.height / scale;
+      let pdfX, pdfY, pdfW, pdfH;
+      if (pageViewport) {
+        const pt1 = pageViewport.convertToPdfPoint(currentBox.x, currentBox.y);
+        const pt2 = pageViewport.convertToPdfPoint(currentBox.x + currentBox.width, currentBox.y + currentBox.height);
+        pdfX = Math.min(pt1[0], pt2[0]);
+        pdfY = Math.min(pt1[1], pt2[1]);
+        pdfW = Math.abs(pt2[0] - pt1[0]);
+        pdfH = Math.abs(pt2[1] - pt1[1]);
+      } else {
+        pdfX = currentBox.x / scale;
+        pdfY = (overlay.height - (currentBox.y + currentBox.height)) / scale;
+        pdfW = currentBox.width / scale;
+        pdfH = currentBox.height / scale;
+      }
 
       const newItem: RedactionItem = {
         id: `redact-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
@@ -340,25 +362,32 @@ export function RedactWorkspace() {
           if (!("str" in item) || !item.str) continue;
           const text = item.str;
 
-          // Reset regex state
           queryRegex.lastIndex = 0;
-          if (queryRegex.test(text)) {
+          let match;
+          while ((match = queryRegex.exec(text)) !== null) {
             const tx = item.transform ? item.transform[4] : 0;
             const ty = item.transform ? item.transform[5] : 0;
-            const width = item.width || 40;
-            const height = item.height || 14;
+            const itemWidth = item.width || 40;
+            const itemHeight = item.height || 14;
+
+            // Approximate the x-coordinate and width of the matched word
+            const charWidth = itemWidth / Math.max(1, text.length);
+            const matchX = tx + (match.index * charWidth);
+            const matchWidth = match[0].length * charWidth;
 
             addedItems.push({
               id: `auto-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
               pageIndex: pNum - 1,
-              x: Math.max(0, Math.round(tx - 2)),
+              x: Math.max(0, Math.round(matchX - 2)),
               y: Math.max(0, Math.round(ty - 2)),
-              width: Math.round(width + 4),
-              height: Math.round(Math.max(12, height) + 4),
+              width: Math.round(matchWidth + 4),
+              height: Math.round(Math.max(12, itemHeight) + 4),
               color: redactColor,
               label: applyLabel ? redactLabel : undefined,
               reason: patternName || `Matched "${searchQuery}"`,
             });
+
+            if (!queryRegex.global) break;
           }
         }
       }
@@ -412,6 +441,7 @@ export function RedactWorkspace() {
   const handleReset = () => {
     setFile(null);
     setPdfDoc(null);
+    setPageViewport(null);
     setTotalPages(0);
     setCurrentPage(1);
     setRedactions([]);

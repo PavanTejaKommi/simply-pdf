@@ -65,6 +65,9 @@ export function Sidebar() {
   const optimizeTools = [
     ["compress", "Compress PDF", "↓"], ["ocr", "OCR scanned PDF", "◎"], ["repair", "Repair PDF", "⌁"], ["flatten", "Flatten PDF", "▰"], ["linearize", "Web optimize", "↝"], ["assets", "Extract assets", "⇩"]
   ];
+  const aiTools = [
+    ["chat", "Chat with PDF", "✧"], ["summarize", "Summarize", "≡"], ["extract", "Extract Data", "▤"], ["translate", "Translate PDF", "文"], ["redact-ai", "Auto-Redact PII", "■"], ["quiz", "Generate Quiz", "?"], ["rewrite", "Proofread & Rewrite", "✎"]
+  ];
   const selectTool = (tool: string) => {
     setActiveTool(tool);
     const targetHash = tool === "organize" ? "" : `#${tool}`;
@@ -129,6 +132,8 @@ export function Sidebar() {
         {editTools.map(([id, label, icon]) => <Link key={id} href={`/edit/${id}`} className={`nav-link ${pathname === `/edit/${id}` ? "active" : ""}`}><span className="nav-icon">{icon}</span>{label}</Link>)}
         <p className="nav-heading tool-heading">Secure & sign</p>
         {secureTools.map(([id, label, icon]) => <Link key={id} href={`/secure/${id}`} className={`nav-link ${pathname === `/secure/${id}` ? "active" : ""}`}><span className="nav-icon">{icon}</span>{label}</Link>)}
+        <p className="nav-heading tool-heading">AI Assistant</p>
+        {aiTools.map(([id, label, icon]) => <Link key={id} href={`/ai/${id}`} className={`nav-link ${pathname === `/ai/${id}` ? "active" : ""}`}><span className="nav-icon">{icon}</span>{label}</Link>)}
         <p className="nav-heading tool-heading">Optimize & repair</p>
         {optimizeTools.map(([id, label, icon]) => <Link key={id} href={`/optimize/${id}`} className={`nav-link ${pathname === `/optimize/${id}` ? "active" : ""}`}><span className="nav-icon">{icon}</span>{label}</Link>)}
       </nav>

@@ -1,10 +1,17 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  output: 'export',
+  basePath: process.env.NODE_ENV === 'production' ? '/simply-pdf' : '',
   webpack: (config, { isServer }) => {
     config.module.rules.push({
       test: /\.worker\.min\.mjs$/,
       type: "asset/resource"
     });
+    config.resolve.alias = {
+      ...config.resolve.alias,
+      "sharp$": false,
+      "onnxruntime-node$": false,
+    };
     if (!isServer) {
       config.resolve.fallback = {
         ...config.resolve.fallback,
