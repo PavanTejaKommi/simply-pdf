@@ -1,0 +1,1 @@
+"use strict";(self.webpackChunk_N_E=self.webpackChunk_N_E||[]).push([[2777],{52777:function(e,r,n){n.d(r,{loadPdf:function(){return t}});async function t(e){let r=await Promise.all([n.e(634),n.e(2957),n.e(257)]).then(n.bind(n,92488));return r.GlobalWorkerOptions.workerSrc="/pdf.worker.min.mjs",r.getDocument({data:await e.arrayBuffer()}).promise}}}]);
