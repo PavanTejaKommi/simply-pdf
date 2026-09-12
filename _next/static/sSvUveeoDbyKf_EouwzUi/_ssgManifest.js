@@ -1,0 +1,1 @@
+self.__SSG_MANIFEST=new Set(["\u002Fai\u002F[kind]","\u002Fconvert\u002F[kind]","\u002Fedit\u002F[kind]","\u002Ffrom-pdf\u002F[kind]","\u002Foptimize\u002F[kind]","\u002Fsecure\u002F[kind]"]);self.__SSG_MANIFEST_CB&&self.__SSG_MANIFEST_CB()
