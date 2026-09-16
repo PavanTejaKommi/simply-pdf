@@ -5,37 +5,54 @@ env.allowLocalModels = false;
 env.useBrowserCache = true;
 
 class PipelineSingleton {
-  static task = 'summarization';
-  static model = 'Xenova/distilbart-cnn-6-6';
+  static task = '';
+  static model = '';
   static instance: any = null;
 
-  static async getInstance(progress_callback: Function) {
-    if (this.instance === null) {
-      this.instance = pipeline(this.task, this.model, { progress_callback });
+  static async getInstance(progress_callback: Function, task: string = 'summarization', model: string = 'Xenova/distilbart-cnn-6-6') {
+    if (this.instance === null || this.task !== task || this.model !== model) {
+      this.task = task;
+      this.model = model;
+      this.instance = pipeline(this.task as any, this.model, { progress_callback });
     }
     return this.instance;
   }
 }
 
 self.addEventListener('message', async (event) => {
-  const { text } = event.data;
+  const { action, text, source_language, target_language } = event.data;
 
   try {
-    const summarizer = await PipelineSingleton.getInstance((data: any) => {
-      self.postMessage({ status: 'progress', data });
-    });
+    if (action === 'translate') {
+      const translator = await PipelineSingleton.getInstance((data: any) => {
+        self.postMessage({ status: 'progress', data });
+      }, 'translation', 'Xenova/nllb-200-distilled-600M');
 
-    self.postMessage({ status: 'ready' });
+      self.postMessage({ status: 'ready' });
 
-    // DistilBART has a token limit, so we take a rough slice to prevent crashes.
-    const chunk = text.slice(0, 4000);
+      // NLLB expects string input
+      const output = await translator(text, {
+        src_lang: source_language || 'eng_Latn',
+        tgt_lang: target_language || 'spa_Latn',
+      });
 
-    const output = await summarizer(chunk, {
-      max_new_tokens: 150,
-      min_new_tokens: 40,
-    });
+      self.postMessage({ status: 'complete', result: output[0].translation_text });
+    } else {
+      // Default to summarize
+      const summarizer = await PipelineSingleton.getInstance((data: any) => {
+        self.postMessage({ status: 'progress', data });
+      });
 
-    self.postMessage({ status: 'complete', result: output[0].summary_text });
+      self.postMessage({ status: 'ready' });
+
+      const chunk = text ? text.slice(0, 4000) : "";
+      const output = await summarizer(chunk, {
+        max_new_tokens: 150,
+        min_new_tokens: 40,
+      });
+
+      self.postMessage({ status: 'complete', result: output[0].summary_text });
+    }
   } catch (error: any) {
     self.postMessage({ status: 'error', error: error.message });
   }

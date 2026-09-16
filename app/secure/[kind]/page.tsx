@@ -8,6 +8,10 @@ import { SanitizeWorkspace } from "../../../components/SanitizeWorkspace";
 
 const kinds = ["password", "permissions", "redact", "sanitize", "sign", "certificate", "watermark"] as const;
 
+export function generateStaticParams() {
+  return kinds.map((kind) => ({ kind }));
+}
+
 export default function Page({ params }: { params: { kind: string } }) {
   if (!kinds.includes(params.kind as (typeof kinds)[number])) {
     notFound();

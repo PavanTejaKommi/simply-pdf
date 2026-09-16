@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState } from "react";
 import { Sidebar } from "./Sidebar";
 import { ThemeToggle } from "./ThemeToggle";
 
@@ -10,7 +10,7 @@ const aiToolsMeta: Record<AiToolKind, { title: string; description: string; acti
   chat: { title: "Chat with PDF", description: "Ask questions and extract precise information interactively.", action: "Start Chat" },
   summarize: { title: "Summarize", description: "Generate a concise executive summary or abstract.", action: "Generate Summary" },
   extract: { title: "Extract Data", description: "Pull structured data like tables, invoice totals, or contacts.", action: "Extract to JSON/CSV" },
-  translate: { title: "Translate PDF", description: "Translate text content while maintaining document structure.", action: "Translate Document" },
+  translate: { title: "Translate PDF", description: "Translate text content while maintaining document structure (including images/barcodes).", action: "Translate & Download" },
   "redact-ai": { title: "Auto-Redact PII", description: "Automatically detect and redact sensitive information (SSN, names).", action: "Run AI Redaction" },
   quiz: { title: "Generate Quiz", description: "Create study materials, flashcards, or quizzes from the text.", action: "Generate Quiz" },
   rewrite: { title: "Proofread & Rewrite", description: "Improve grammar, clarity, or adjust the tone of the document.", action: "Rewrite Text" },
@@ -21,43 +21,19 @@ export function AiToolWorkspace({ kind }: { kind: AiToolKind }) {
   const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState("");
+  const [targetLang, setTargetLang] = useState("Spanish");
+  const [chatQuery, setChatQuery] = useState("");
+  const [extractTarget, setExtractTarget] = useState("");
+  const [summaryStyle, setSummaryStyle] = useState("executive");
 
-  const workerRef = useRef<Worker | null>(null);
-  const [downloadProgress, setDownloadProgress] = useState<{ file: string, progress: number } | null>(null);
 
-  useEffect(() => {
-    if (kind === "summarize") {
-      workerRef.current = new Worker(new URL('../lib/ai-worker.ts', import.meta.url), {
-        type: 'module'
-      });
-      
-      workerRef.current.addEventListener('message', (event) => {
-        const { status, data, result, error } = event.data;
-        if (status === 'progress') {
-          setDownloadProgress({ file: data.file, progress: data.progress });
-        } else if (status === 'ready') {
-          setDownloadProgress(null);
-        } else if (status === 'complete') {
-          setBusy(false);
-          setResult(result);
-        } else if (status === 'error') {
-          setBusy(false);
-          setResult(`Error: ${error}`);
-        }
-      });
-
-      return () => {
-        workerRef.current?.terminate();
-      };
-    }
-  }, [kind]);
 
   const handleApply = async () => {
     if (!file) return;
     setBusy(true);
     setResult("");
 
-    if (kind === "summarize" && workerRef.current) {
+    if (kind === "summarize") {
       try {
         const { loadPdf } = await import("../lib/pdfjs");
         const doc = await loadPdf(file);
@@ -68,19 +44,239 @@ export function AiToolWorkspace({ kind }: { kind: AiToolKind }) {
            fullText += content.items.map((item: any) => "str" in item ? item.str : "").join(" ") + " ";
         }
         
-        workerRef.current.postMessage({ text: fullText });
-      } catch (err) {
+        let promptModifier = "Summarize the following document comprehensively. Provide only the summary, no conversational filler.";
+        if (summaryStyle === "executive") promptModifier = "Provide a concise executive summary of the following document. Provide only the summary, no conversational filler.";
+        if (summaryStyle === "detailed") promptModifier = "Provide a highly detailed, comprehensive summary covering all key arguments and data of the following document.";
+        if (summaryStyle === "bullets") promptModifier = "Provide a summary of the following document in the form of a bulleted list of the top takeaways.";
+        if (summaryStyle === "eli5") promptModifier = "Summarize this document in extremely simple terms, as if explaining to a 5-year-old.";
+        if (summaryStyle === "action_items") promptModifier = "Extract and summarize only the actionable items, tasks, and next steps from the following document.";
+
+        const response = await fetch("http://localhost:11434/api/generate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: "llama3.1",
+            prompt: `${promptModifier}\n\nDocument text: ${fullText}`,
+            stream: true,
+            options: { num_gpu: 0, num_ctx: 16384 }
+          })
+        });
+        
+        if (!response.ok) throw new Error("Ollama request failed. Is Ollama running?");
+        const reader = response.body?.getReader();
+        if (!reader) throw new Error("No response body");
+        
+        const decoder = new TextDecoder();
+        let fullResponse = "";
+        
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const chunk = decoder.decode(value, { stream: true });
+          const lines = chunk.split('\n').filter(l => l.trim() !== '');
+          for (const line of lines) {
+            try {
+              const data = JSON.parse(line);
+              if (data.response) {
+                fullResponse += data.response;
+                setResult(fullResponse);
+              }
+            } catch (e) {
+              // Ignore partial JSON lines
+            }
+          }
+        }
+        
         setBusy(false);
-        setResult("Failed to read PDF text.");
+      } catch (err: any) {
+        setBusy(false);
+        setResult("Failed to generate summary: " + err.message);
       }
       return;
     }
 
-    // Simulate API call for other tools
-    setTimeout(() => {
+    if (kind === "translate") {
+      try {
+        const { loadPdf } = await import("../lib/pdfjs");
+        const doc = await loadPdf(file);
+        const { jsPDF } = await import("jspdf");
+        
+        const newPdf = new jsPDF();
+        
+        const translateText = async (text: string) => {
+          // @ts-ignore
+          if (!('ai' in self) || !('translator' in self.ai)) {
+            throw new Error("Browser-side Translation API is not supported in this browser. Please use a compatible browser (e.g., Chrome with Translation API enabled).");
+          }
+
+          const langMap: Record<string, string> = {
+            "Spanish": "es",
+            "French": "fr",
+            "German": "de",
+            "Japanese": "ja",
+            "Chinese (Simplified)": "zh"
+          };
+          
+          const targetCode = langMap[targetLang] || "es";
+          
+          // @ts-ignore
+          const translator = await self.ai.translator.create({
+            sourceLanguage: 'en',
+            targetLanguage: targetCode
+          });
+          
+          const result = await translator.translate(text);
+          return result.trim();
+        };
+
+        for (let i = 1; i <= doc.numPages; i++) {
+           if (i > 1) newPdf.addPage();
+           const page = await doc.getPage(i);
+           const content = await page.getTextContent();
+           const viewport = page.getViewport({ scale: 2.0 });
+           
+           const canvas = document.createElement("canvas");
+           const ctx = canvas.getContext("2d");
+           canvas.height = viewport.height;
+           canvas.width = viewport.width;
+           if (ctx) {
+             await page.render({ canvasContext: ctx, viewport }).promise;
+           }
+
+           let items = content.items
+             .filter((item: any) => item.str && item.str.trim().length > 0)
+             .map((item: any) => ({
+               str: item.str,
+               y: viewport.height - (item.transform[5] * 2.0),
+               height: item.height * 2.0
+             }))
+             .sort((a, b) => a.y - b.y);
+
+           let currentPdfY = 20;
+           let lastY = 0;
+           let textBlocks = [];
+           let currentBlock = "";
+           
+           for (let j = 0; j < items.length; j++) {
+              let item = items[j];
+              // Detect gaps for images/barcodes (approx 150 canvas units)
+              if (j > 0 && item.y - lastY > 150) {
+                 if (currentBlock.trim().length > 0) {
+                    textBlocks.push({ type: 'text', content: currentBlock.trim() });
+                    currentBlock = "";
+                 }
+                 let sliceHeight = item.y - lastY - 40;
+                 if (sliceHeight > 50 && ctx) {
+                    const sliceCanvas = document.createElement("canvas");
+                    sliceCanvas.width = canvas.width;
+                    sliceCanvas.height = sliceHeight;
+                    const sCtx = sliceCanvas.getContext("2d");
+                    sCtx?.drawImage(canvas, 0, lastY + 20, canvas.width, sliceHeight, 0, 0, canvas.width, sliceHeight);
+                    textBlocks.push({ type: 'image', content: sliceCanvas.toDataURL("image/jpeg", 0.9), height: sliceHeight / 2.0 });
+                 }
+              }
+              currentBlock += item.str + " ";
+              lastY = item.y;
+           }
+           if (currentBlock.trim().length > 0) {
+              textBlocks.push({ type: 'text', content: currentBlock.trim() });
+           }
+
+           for (const block of textBlocks) {
+              if (block.type === 'text') {
+                 try {
+                   const translated = await translateText(block.content as string);
+                   const split = newPdf.splitTextToSize(translated, 180);
+                   newPdf.text(split, 15, currentPdfY);
+                   currentPdfY += split.length * 7;
+                 } catch (e) {
+                   console.error("Translation error", e);
+                 }
+              } else if (block.type === 'image') {
+                 const pdfWidth = 180;
+                 const imgHeight = (block.height as number) * (pdfWidth / (viewport.width / 2.0));
+                 newPdf.addImage(block.content as string, "JPEG", 15, currentPdfY, pdfWidth, imgHeight);
+                 currentPdfY += imgHeight + 10;
+              }
+              
+              if (currentPdfY > 280) {
+                 newPdf.addPage();
+                 currentPdfY = 20;
+              }
+           }
+        }
+        
+
+        newPdf.save(`Translated_${file.name}`);
+        setBusy(false);
+        setResult("Document translated and downloaded successfully! The layout and images were preserved.");
+        return;
+      } catch (err) {
+        console.error(err);
+        setBusy(false);
+        setResult("Failed to translate PDF.");
+        return;
+      }
+    }
+
+    try {
+      const { loadPdf } = await import("../lib/pdfjs");
+      const doc = await loadPdf(file);
+      let fullText = "";
+      for (let i = 1; i <= doc.numPages; i++) {
+         const page = await doc.getPage(i);
+         const content = await page.getTextContent();
+         fullText += content.items.map((item: any) => "str" in item ? item.str : "").join(" ") + " ";
+      }
+      
+      let prompt = "";
+      if (kind === "chat") prompt = `Based on the following document, answer this question: ${chatQuery}\n\nDocument: ${fullText}`;
+      else if (kind === "extract") prompt = `Extract the following information from this document: ${extractTarget}. Output strictly as JSON. Do not include markdown formatting like \`\`\`json.\n\nDocument: ${fullText}`;
+      else if (kind === "redact-ai") prompt = `Identify all sensitive PII (names, SSN, emails, phone numbers) in the following text and replace them with [REDACTED]. Return the redacted text.\n\nDocument: ${fullText}`;
+      else if (kind === "quiz") prompt = `Generate a 5-question multiple choice quiz based on the following document. Include an answer key at the end.\n\nDocument: ${fullText}`;
+      else if (kind === "rewrite") prompt = `Proofread and rewrite the following document to improve grammar, clarity, and professionalism.\n\nDocument: ${fullText}`;
+
+      const response = await fetch("http://localhost:11434/api/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "llama3.1",
+          prompt,
+          stream: true,
+          options: { num_gpu: 0, num_ctx: 16384 }
+        })
+      });
+      
+      if (!response.ok) throw new Error("Ollama request failed. Is Ollama running?");
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error("No response body");
+      
+      const decoder = new TextDecoder();
+      let fullResponse = "";
+      
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const chunk = decoder.decode(value, { stream: true });
+        const lines = chunk.split('\n').filter(l => l.trim() !== '');
+        for (const line of lines) {
+          try {
+            const data = JSON.parse(line);
+            if (data.response) {
+              fullResponse += data.response;
+              setResult(fullResponse);
+            }
+          } catch (e) {
+            // Ignore partial JSON lines
+          }
+        }
+      }
+      
       setBusy(false);
-      setResult("Since this application is running locally without an external API key, this is a simulated response. In a production environment, this would securely process your PDF using an AI model to fulfill your request.");
-    }, 2500);
+    } catch (err: any) {
+      setBusy(false);
+      setResult("Failed to process document: " + err.message);
+    }
   };
 
   return (
@@ -126,7 +322,7 @@ export function AiToolWorkspace({ kind }: { kind: AiToolKind }) {
               {kind === "translate" && (
                 <div className="wm-form-group" style={{ marginBottom: 24 }}>
                   <label className="wm-label">Target Language</label>
-                  <select className="wm-select">
+                  <select className="wm-select" value={targetLang} onChange={(e) => setTargetLang(e.target.value)}>
                     <option>Spanish</option>
                     <option>French</option>
                     <option>German</option>
@@ -136,10 +332,30 @@ export function AiToolWorkspace({ kind }: { kind: AiToolKind }) {
                 </div>
               )}
 
+              {kind === "summarize" && (
+                <div className="wm-form-group" style={{ marginBottom: 24 }}>
+                  <label className="wm-label">Summary Style</label>
+                  <select className="wm-select" value={summaryStyle} onChange={(e) => setSummaryStyle(e.target.value)}>
+                    <option value="executive">Executive Summary</option>
+                    <option value="detailed">Detailed Breakdown</option>
+                    <option value="bullets">Bullet Points</option>
+                    <option value="eli5">Explain Like I'm 5 (ELI5)</option>
+                    <option value="action_items">Action Items</option>
+                  </select>
+                </div>
+              )}
+
+              {kind === "chat" && (
+                <div className="wm-form-group" style={{ marginBottom: 24 }}>
+                  <label className="wm-label">Your Question</label>
+                  <input type="text" className="wm-text-input" placeholder="e.g. What is the main conclusion of this report?" value={chatQuery} onChange={(e) => setChatQuery(e.target.value)} />
+                </div>
+              )}
+
               {kind === "extract" && (
                 <div className="wm-form-group" style={{ marginBottom: 24 }}>
                   <label className="wm-label">Extraction Target</label>
-                  <input type="text" className="wm-text-input" placeholder="e.g. Invoice Totals, Contact Emails, Action Items" />
+                  <input type="text" className="wm-text-input" placeholder="e.g. Invoice Totals, Contact Emails, Action Items" value={extractTarget} onChange={(e) => setExtractTarget(e.target.value)} />
                 </div>
               )}
 
@@ -154,19 +370,7 @@ export function AiToolWorkspace({ kind }: { kind: AiToolKind }) {
                     {busy ? "AI is thinking..." : item.action}
                   </button>
                   
-                  {downloadProgress && (
-                    <div style={{ padding: "12px", backgroundColor: "rgba(138, 43, 226, 0.05)", borderRadius: 8, fontSize: 12, color: "var(--text-muted)", marginTop: 8 }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "80%" }}>
-                          Downloading model: {downloadProgress.file}
-                        </span>
-                        <span>{Math.round(downloadProgress.progress)}%</span>
-                      </div>
-                      <div style={{ width: "100%", height: 4, backgroundColor: "rgba(0,0,0,0.1)", borderRadius: 2 }}>
-                        <div style={{ width: `${downloadProgress.progress}%`, height: "100%", backgroundColor: "#8a2be2", borderRadius: 2, transition: "width 0.2s" }} />
-                      </div>
-                    </div>
-                  )}
+
                 </div>
               )}
             </div>

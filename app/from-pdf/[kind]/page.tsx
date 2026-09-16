@@ -6,6 +6,10 @@ const dedicatedKinds = ["word", "powerpoint", "excel", "audio"] as const;
 const legacyKinds = ["office", "images", "text", "html", "pdfa"] as const;
 const allKinds = [...dedicatedKinds, ...legacyKinds] as const;
 
+export function generateStaticParams() {
+  return allKinds.map((kind) => ({ kind }));
+}
+
 export default function Page({ params }: { params: { kind: string } }) {
   if (!allKinds.includes(params.kind as (typeof allKinds)[number])) {
     notFound();
