@@ -339,7 +339,7 @@ export function AiToolWorkspace({ kind }: { kind: AiToolKind }) {
                     <option value="executive">Executive Summary</option>
                     <option value="detailed">Detailed Breakdown</option>
                     <option value="bullets">Bullet Points</option>
-                    <option value="eli5">Explain Like I'm 5 (ELI5)</option>
+                    <option value="eli5">Explain Like I&apos;m 5 (ELI5)</option>
                     <option value="action_items">Action Items</option>
                   </select>
                 </div>
